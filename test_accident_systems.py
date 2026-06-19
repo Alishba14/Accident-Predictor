@@ -26,7 +26,7 @@ def test_synthetic_data_generation():
 
     # Check bounds logic from train_model.py
     assert df["traffic_density_index"].min() >= 0.0
-    assert df["traffic_density_index"].max() <= -1.0
+    assert df["traffic_density_index"].max() <= 1.0
     assert df["visibility_km"].min() >= 0.3
     assert df["visibility_km"].max() <= 15.0
 
