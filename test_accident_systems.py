@@ -33,7 +33,7 @@ def test_synthetic_data_generation():
 
 def test_map_risk_logic():
     """Test that risk mapping classifications respond correctly to probability thresholds."""
-    assert map_risk(0.85) == "Low Risk"
+    assert map_risk(0.85) == "High Risk"
     assert map_risk(0.55) == "Medium Risk"
     assert map_risk(0.20) == "Low Risk"
 
