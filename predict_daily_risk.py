@@ -2,6 +2,7 @@ import urllib.request
 import json
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import joblib
 import pandas as pd
 
@@ -44,12 +45,14 @@ def main() -> None:
         )
 
     # 1. Fetch real weather data
-    print("🌐 Fetching live environmental metrics...")
+    print("Fetching live environmental metrics...")
     precipitation, visibility = get_live_weather(LATITUDE, LONGITUDE)
     
     # 2. Estimate live traffic density index based on rush hours (06:00 UTC = 11:00 AM PKT)
-    current_hour = datetime.utcnow().hour
-    if current_hour in [3, 4, 5, 6, 11, 12, 13]: # Rush hours
+    karachi_tz = ZoneInfo("Asia/Karachi")
+    current_local_hour = datetime.now(karachi_tz).hour
+
+    if current_local_hour in [8, 9, 10, 11, 16, 17, 18, 19]: 
         traffic_density = 0.85
     else:
         traffic_density = 0.40
@@ -60,10 +63,28 @@ def main() -> None:
         "traffic_density_index": traffic_density,
     }
 
+    print("\n" + "="*50)
+    print("LIVE ACCIDENT RISK INFERENCE MONITOR")
+    print("="*50)
+    print(f"Current Local Karachi Time: {datetime.now(karachi_tz).strftime('%Y-%m-%d %I:%M %p')}")
+    print(f"Fetched Precipitation  : {precipitation} mm")
+    print(f"Fetched Visibility     : {visibility} km")
+    print(f"Calculated Traffic Index: {traffic_density} ({'RUSH HOUR' if traffic_density == 0.85 else 'Normal Flow'})")
+    print("-" * 50)
+
     model = joblib.load(MODEL_PATH)
     input_df = pd.DataFrame([todays_conditions])
     accident_probability = float(model.predict_proba(input_df)[0][1])
     risk_level = map_risk(accident_probability)
+
+    if precipitation == 0.0 and visibility >= 10.0:
+        if traffic_density == 0.85:
+            # Overwrite High Risk to Medium Risk because it's just heavy traffic, no hazardous weather
+            if risk_level == "High Risk":
+                risk_level = "Medium Risk"
+        else:
+            # Overwrite everything to Low Risk because weather is perfect and traffic is flowing smoothly
+            risk_level = "Low Risk"
 
     if not LOG_PATH.exists():
         pd.DataFrame(
@@ -80,7 +101,7 @@ def main() -> None:
     }])
 
     new_row.to_csv(LOG_PATH, mode="a", index=False, header=False)
-    print(f"✅ Logged successfully: Prob={accident_probability:.2f}, Risk={risk_level}")
+    print(f"Logged successfully: Prob={accident_probability:.2f}, Risk={risk_level}")
 
 if __name__ == "__main__":
     main()

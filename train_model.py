@@ -58,8 +58,7 @@ def generate_synthetic_data(n_rows: int = 200, seed: int = RANDOM_SEED) -> pd.Da
 
 def main() -> None:
     # --- DATA SELECTION ---
-    # Change USE_REAL_DATA to True once you have a real historical dataset file
-    USE_REAL_DATA = False
+    USE_REAL_DATA = True  # Set to True since you created your CSV
     HISTORICAL_DATA_PATH = "historical_accidents.csv"
 
     if USE_REAL_DATA:
@@ -67,7 +66,7 @@ def main() -> None:
         df = load_real_data(HISTORICAL_DATA_PATH)
     else:
         print("Using synthetic fallback dataset...")
-        df = generate_synthetic_data(n_rows=1000)  # Upgraded size for better variance
+        df = generate_synthetic_data(n_rows=1000)
 
     feature_cols = [
         "precipitation_mm",
@@ -77,28 +76,63 @@ def main() -> None:
     X = df[feature_cols]
     y = df["accident_occurred"]
 
+    # Stratified split to handle target imbalance
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=RANDOM_SEED, stratify=y
     )
 
-    model = RandomForestClassifier(
-        n_estimators=200,
-        random_state=RANDOM_SEED,
-        class_weight="balanced",
-    )
-    model.fit(X_train, y_train)
+    # --- MODEL BENCHMARKING ---
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.svm import SVC
+    from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 
-    y_pred = model.predict(X_test)
+    models = {
+        "Logistic Regression": LogisticRegression(class_weight="balanced", random_state=RANDOM_SEED),
+        "Decision Tree": DecisionTreeClassifier(class_weight="balanced", random_state=RANDOM_SEED),
+        "Random Forest": RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=RANDOM_SEED, n_jobs=-1),
+        "Gradient Boosting": GradientBoostingClassifier(random_state=RANDOM_SEED),
+        "Support Vector Classifier": SVC(class_weight="balanced", probability=True, random_state=RANDOM_SEED)
+    }
 
-    print("\n=== Classification Report ===")
-    print(classification_report(y_test, y_pred, digits=3))
+    results = {}
+    best_f1 = -1
+    best_model_name = None
+    best_model_object = None
 
-    print("=== Confusion Matrix ===")
-    print(confusion_matrix(y_test, y_pred))
+    print("\n" + "="*50)
+    print("Starting Multi-Model Comparison Benchmarking")
+    print("="*50)
 
-    joblib.dump(model, MODEL_PATH)
-    print(f"\nModel saved to {MODEL_PATH}")
+    for name, model in models.items():
+        # Train
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        
+        # Evaluate Metrics
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, zero_division=0)
+        rec = recall_score(y_test, y_pred, zero_division=0)
+        
+        results[name] = {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1-Score": f1}
+        
+        # Track the best performing model based on F1-Score
+        if f1 > best_f1:
+            best_f1 = f1
+            best_model_name = name
+            best_model_object = model
 
+    # Print out results comparison matrix
+    results_df = pd.DataFrame(results).T.sort_values(by="F1-Score", ascending=False)
+    print("\nmodels (Sorted by F1-Score):")
+    print(results_df.to_string())
+    print("="*50)
 
+    # --- EXPORT BEST MODEL ---
+    print(f"Saving the best model ('{best_model_name}') to '{MODEL_PATH}'...")
+    joblib.dump(best_model_object, MODEL_PATH)
+    
 if __name__ == "__main__":
     main()
