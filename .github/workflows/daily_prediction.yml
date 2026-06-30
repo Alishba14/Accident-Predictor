@@ -37,12 +37,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Ensure we're up to date before committing
+          git pull --ff-only origin main || exit 0
+
           git add daily_risk_log.csv
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
-          else
-            git commit -m "chore: update daily risk log"
-            git pull --rebase origin main
-            git push
+            exit 0
           fi
+
+          git commit -m "chore: update daily risk log"
+
+          # Push only this commit; if branch moved, skip instead of rebasing with conflicts
+          git push origin HEAD:main || echo "Push rejected due to remote updates; skipping this run."
