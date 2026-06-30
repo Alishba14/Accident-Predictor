@@ -1,12 +1,19 @@
+import hashlib
+import shutil
 import joblib
 import numpy as np
 import pandas as pd
+from datetime import datetime
+from pathlib import Path
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 RANDOM_SEED = 42
-MODEL_PATH = "accident_model.pkl"
+MODEL_PATH = Path("accident_model.pkl")
+HASH_PATH = Path("accident_model.pkl.sha256")
 
 
 def load_real_data(file_path: str) -> pd.DataFrame:
@@ -27,6 +34,26 @@ def load_real_data(file_path: str) -> pd.DataFrame:
 
     # 3. Data validation bounds (Clipping outliers if necessary to fit training distribution)
     df["traffic_density_index"] = df["traffic_density_index"].clip(0.0, 1.0)
+
+    # 4. Clip physically impossible negative precipitation
+    if (df["precipitation_mm"] < 0).any():
+        print("Warning: Negative precipitation values found and clipped to 0.")
+        df["precipitation_mm"] = df["precipitation_mm"].clip(lower=0.0)
+
+    # 5. Log duplicate feature vectors but do NOT remove them.
+    #    Time-series data with coarse features (binary traffic, rounded visibility)
+    #    naturally produces identical feature vectors across different timestamps.
+    #    Dropping them destroys the dataset and skews class balance.
+    n_dupes = df.duplicated().sum()
+    if n_dupes > 0:
+        print(f"Info: {n_dupes} rows share identical feature values (expected for coarse time-series features).")
+
+    # 6. Guard against all-zero labels — model cannot learn without positive examples
+    if df["accident_occurred"].sum() == 0:
+        raise ValueError(
+            "Training data has zero positive labels (accident_occurred = 1). "
+            "Run generate_labels.py or inject_label.py to assign accident labels first."
+        )
 
     return df
 
@@ -57,15 +84,15 @@ def generate_synthetic_data(n_rows: int = 200, seed: int = RANDOM_SEED) -> pd.Da
 
 
 def main() -> None:
-    # --- DATA SELECTION ---
-    USE_REAL_DATA = True  # Set to True since you created your CSV
+    # --- DATA SELECTION (auto-detects CSV; falls back to synthetic if not found) ---
     HISTORICAL_DATA_PATH = "historical_accidents.csv"
+    USE_REAL_DATA = Path(HISTORICAL_DATA_PATH).exists()
 
     if USE_REAL_DATA:
         print(f"Loading real-world data from {HISTORICAL_DATA_PATH}...")
         df = load_real_data(HISTORICAL_DATA_PATH)
     else:
-        print("Using synthetic fallback dataset...")
+        print("historical_accidents.csv not found — using synthetic fallback dataset...")
         df = generate_synthetic_data(n_rows=1000)
 
     feature_cols = [
@@ -86,53 +113,82 @@ def main() -> None:
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.ensemble import GradientBoostingClassifier
     from sklearn.svm import SVC
+    from sklearn.calibration import CalibratedClassifierCV
     from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score
 
     models = {
-        "Logistic Regression": LogisticRegression(class_weight="balanced", random_state=RANDOM_SEED),
+        "Logistic Regression": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(class_weight="balanced", random_state=RANDOM_SEED)),
+        ]),
         "Decision Tree": DecisionTreeClassifier(class_weight="balanced", random_state=RANDOM_SEED),
         "Random Forest": RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=RANDOM_SEED, n_jobs=-1),
         "Gradient Boosting": GradientBoostingClassifier(random_state=RANDOM_SEED),
-        "Support Vector Classifier": SVC(class_weight="balanced", probability=True, random_state=RANDOM_SEED)
+        "Support Vector Classifier": Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", CalibratedClassifierCV(SVC(class_weight="balanced", random_state=RANDOM_SEED), ensemble=False)),
+        ]),
     }
 
     results = {}
-    best_f1 = -1
+    best_cv_f1 = -1
     best_model_name = None
     best_model_object = None
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
 
     print("\n" + "="*50)
     print("Starting Multi-Model Comparison Benchmarking")
     print("="*50)
 
     for name, model in models.items():
-        # Train
+        # 5-fold cross-validated F1 — unbiased model selection
+        cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="f1", n_jobs=-1)
+        mean_cv_f1 = cv_scores.mean()
+
+        # Final fit on training split for hold-out evaluation
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
-        
+
         # Evaluate Metrics
         f1 = f1_score(y_test, y_pred, zero_division=0)
         acc = accuracy_score(y_test, y_pred)
         prec = precision_score(y_test, y_pred, zero_division=0)
         rec = recall_score(y_test, y_pred, zero_division=0)
-        
-        results[name] = {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1-Score": f1}
-        
-        # Track the best performing model based on F1-Score
-        if f1 > best_f1:
-            best_f1 = f1
+
+        results[name] = {"CV F1 (mean)": round(mean_cv_f1, 4), "Accuracy": acc, "Precision": prec, "Recall": rec, "F1 (hold-out)": f1}
+
+        # Select best model by cross-validated F1 to avoid single-split luck
+        if mean_cv_f1 > best_cv_f1:
+            best_cv_f1 = mean_cv_f1
             best_model_name = name
             best_model_object = model
 
     # Print out results comparison matrix
-    results_df = pd.DataFrame(results).T.sort_values(by="F1-Score", ascending=False)
-    print("\nmodels (Sorted by F1-Score):")
+    results_df = pd.DataFrame(results).T.sort_values(by="CV F1 (mean)", ascending=False)
+    print("\nModels (Sorted by CV F1):")
     print(results_df.to_string())
     print("="*50)
 
     # --- EXPORT BEST MODEL ---
+    if best_model_object is None:
+        raise RuntimeError(
+            "No model could be selected — all models scored CV F1 = 0. "
+            "Check your training data: run generate_labels.py or inject_label.py first."
+        )
+
     print(f"Saving the best model ('{best_model_name}') to '{MODEL_PATH}'...")
     joblib.dump(best_model_object, MODEL_PATH)
-    
+
+    # Write SHA-256 integrity hash (verified by predict_daily_risk.py at load time)
+    model_hash = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
+    HASH_PATH.write_text(model_hash)
+    print(f"Integrity hash written to '{HASH_PATH}' ({model_hash[:16]}...)")
+
+    # Save a timestamped backup so a bad retrain never destroys the previous model
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = Path(f"accident_model_backup_{timestamp}.pkl")
+    shutil.copy2(MODEL_PATH, backup_path)
+    print(f"Versioned backup saved: '{backup_path}'")
 if __name__ == "__main__":
     main()
