@@ -1,4 +1,4 @@
-# 🚦 Accident Risk Predictor
+# Accident Risk Predictor
 
 A machine-learning system that predicts road accident risk in **Karachi, Pakistan** using real-time weather and traffic data, backed by a fully automated GitHub Actions CI/CD pipeline.
 
@@ -178,16 +178,6 @@ Scheduled / Manual trigger
 ## AI Tools Used
 
 This project was developed with **GitHub Copilot** as a primary development assistant:
-
-| File | Copilot contribution |
-|------|----------------------|
-| `fetch_data.py` | Identified and fixed a timezone bug — raw UTC timestamps were used for rush-hour logic, shifting all hours by 5. Fixed by converting through `ZoneInfo("Asia/Karachi")`. |
-| `generate_labels.py` | Suggested lowering the accident threshold and adding a safety check to force the top 15% of risk-scored hours to `1` when positives are too sparse. |
-| `train_model.py` | Expanded a single-model script into a 5-model benchmarking loop with CV-based selection. |
-| `test_accident_systems.py` | All 12 tests written and extended with Copilot, covering bounds, thresholds, timezone logic, and edge cases. |
-| `daily_prediction.yml` | Authored the full workflow including scheduling, dependency installation, and the conditional log commit step. |
-
-**Human judgment applied to:** data source selection, feature engineering decisions, rush-hour window definitions, threshold choices, and all architectural decisions.
 
 ---
 
