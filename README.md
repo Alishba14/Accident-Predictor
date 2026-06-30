@@ -4,8 +4,6 @@ A machine-learning system that predicts road accident risk in **Karachi, Pakista
 
 ---
 
-## What I Built
-
 This project delivers:
 
 ### 1. Machine Learning System
@@ -60,7 +58,7 @@ accident-predictor-cicd/
 
 ---
 
-## Why This Technology Stack
+## Technology Stack
 
 ### Python
 Python is the industry standard for machine learning. Its ecosystem (scikit-learn, pandas, numpy, joblib) covers every stage of the pipeline from data loading to model serialization in a consistent, readable syntax that matches how the system's logic is described.
