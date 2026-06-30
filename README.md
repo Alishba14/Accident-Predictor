@@ -1,37 +1,20 @@
-# 🚦Accident Risk Predictor (CI/CD Pipeline Project)
+# 🚦 Accident Risk Predictor
 
 A machine-learning system that predicts road accident risk in **Karachi, Pakistan** using real-time weather and traffic data, backed by a fully automated GitHub Actions CI/CD pipeline.
 
 ---
 
-This project delivers:
+## What It Does
 
-### 1. Machine Learning System
-An accident risk classifier that ingests three environmental signals:
+The system ingests three environmental signals and classifies the current hour as **Low / Medium / High Risk**:
 
-| `precipitation_mm` | Open-Meteo Archive/Forecast API | Hourly rainfall in Karachi |
-| `visibility_km` | Open-Meteo Archive/Forecast API | Visibility clamped to 0.3–15 km |
-| `traffic_density_index` | Rule-based (local time) | 0.85 during rush hours, 0.40 otherwise |
+| Feature | Source | Description |
+|---------|--------|-------------|
+| `precipitation_mm` | Open-Meteo Archive / Forecast API | Hourly rainfall |
+| `visibility_km` | Open-Meteo Archive / Forecast API | Visibility clamped to 0.3–15 km |
+| `traffic_density_index` | Rule-based (local Karachi time) | 0.85 during rush hours, 0.40 otherwise |
 
-The pipeline compares **5 classifiers** (Logistic Regression, Decision Tree, Random Forest, Gradient Boosting, SVC), selects the best by F1-Score, serializes it to `accident_model.pkl`, and uses it to output a live **Low / Medium / High Risk** verdict.
-
-### 2. CI/CD Automation via GitHub Actions
-A three-job automated pipeline (`ci.yml`) that runs on every push and pull request:
-
-```
-Push / PR
-    │
-    ▼
-[Job 1] Lint (flake8)
-    │  passes?
-    ▼
-[Job 2] Unit Tests (pytest)
-    │  passes? + push to main only?
-    ▼
-[Job 3] Daily Risk Prediction
-```
-
-Branch protection rules enforce that **no PR can be merged into `main` unless both lint and tests pass**.
+Five classifiers are benchmarked (Logistic Regression, Decision Tree, Random Forest, Gradient Boosting, SVC). The best model by **5-fold cross-validated F1** is serialized to `accident_model.pkl` and used for live inference.
 
 ---
 
@@ -42,88 +25,21 @@ accident-predictor-cicd/
 │
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                  # GitHub Actions pipeline definition
+│       └── daily_prediction.yml    # GitHub Actions: test → predict → log
 │
 ├── fetch_data.py                   # Downloads 1-year hourly weather from Open-Meteo Archive
-├── generate_labels.py              # Score-based label generation (deterministic)
-├── inject_label.py                 # Probabilistic label injection (binomial sampling)
-├── train_model.py                  # Multi-model benchmarking + best model export
+├── generate_labels.py              # Assigns synthetic accident labels from a risk scoring formula
+├── train_model.py                  # 5-model benchmarking + best model export
 ├── predict_daily_risk.py           # Live inference using current weather + time
-├── test_accident_systems.py        # pytest suite (4 test cases)
-├── requirements.txt                # Python dependencies
+├── run_pipeline.py                 # Orchestrator: runs all steps in the correct order
+├── test_accident_systems.py        # pytest suite (12 test cases)
+├── requirements.txt                # Pinned Python dependencies
+├── .gitignore                      # Excludes caches, backups, and .venv
 ├── historical_accidents.csv        # Training data (8,760 hourly rows, 1 year)
 ├── daily_risk_log.csv              # Append-only prediction log
-└── accident_model.pkl              # Serialized best model binary
+├── accident_model.pkl              # Serialized best model binary
+└── accident_model.pkl.sha256       # SHA-256 integrity hash of the model
 ```
-
----
-
-## Technology Stack
-
-### Python
-Python is the industry standard for machine learning. Its ecosystem (scikit-learn, pandas, numpy, joblib) covers every stage of the pipeline from data loading to model serialization in a consistent, readable syntax that matches how the system's logic is described.
-
-### scikit-learn
-Provides a unified API for 5 different classifier families under one `fit/predict/predict_proba` interface, making multi-model comparison trivial. `RandomForestClassifier` and `GradientBoostingClassifier` are well-suited for small tabular datasets where deep learning would overfit.
-
-### Open-Meteo API
-Free, no-auth-required, high-quality meteorological data with both archive (historical) and forecast (real-time) endpoints - ideal for a self-contained project that needs real environmental signals without API key management complexity.
-
-### GitHub Actions
-Native to GitHub, zero infrastructure cost, and YAML-based - meaning the pipeline is version-controlled alongside the code it tests. The `needs:` keyword enforces a strict job dependency chain so tests cannot run on unlinted code.
-
-### flake8
-Lightweight, fast, and widely adopted Python linter. Catches syntax errors, undefined names, and PEP 8 style violations in under 2 seconds - a valuable first gate before running the heavier test suite.
-
-### pytest
-A Python testing framework. Clean fixture model, readable assertion output, and integrates with GitHub Actions via standard exit codes (0 = pass, non-zero = fail).
-
----
-
-## CI/CD Pipeline Explanation
-
-### Trigger Events
-The pipeline fires on:
-- `push` to `main` or any `feature/**` branch
-- `pull_request` targeting `main`
-
-### Job 1 - Lint (`flake8`)
-Installs flake8 and scans all `.py` files for style violations and syntax errors.
-**Max line length:** 120 characters (accommodates pandas/sklearn method chains).
-If this job fails, Job 2 is skipped entirely (`needs: lint`).
-
-### Job 2 - Unit Tests (`pytest`)
-Installs all dependencies from `requirements.txt`, trains the model using `train_model.py` (so `accident_model.pkl` exists for tests), then runs the 4-test suite:
-
-| `test_synthetic_data_generation` | DataFrame shape, column names, feature bounds |
-| `test_map_risk_logic` | Risk classification thresholds (High/Medium/Low) |
-| `test_model_file_exists_and_loads` | Model binary exists and is a valid joblib classifier |
-| `test_model_prediction_schema` | Model accepts correct feature shape, returns valid probabilities |
-
-### Job 3 - Daily Prediction (main-only)
-Runs `predict_daily_risk.py` to fetch live weather from Open-Meteo and log the current risk level. This only triggers on `push` to `main` (not on PRs) to avoid unnecessary API calls.
-
-### Branch Protection
-Configured via GitHub Settings ----> Branches ----> Protection Rules:
-- PRs require `Lint Check (flake8)` ✅ and `Unit Tests (pytest)` ✅ to pass
-- Direct pushes to `main` are blocked
-- See `.github/BRANCH_PROTECTION.md` for setup steps
-
----
-
-##  AI Tools Used During Development
-
-This project was developed with **Github Copilot** and **gemini** as a primary development assistant. how i used it:
-
-
-| `fetch_data.py` | copilot identified and fixed a timezone bug - raw UTC timestamps were being used to assign rush-hour traffic density, which shifted all hour classifications by 5 hours. The fix wraps UTC datetimes in `ZoneInfo("UTC")` before converting to `Asia/Karachi`. |
-| `generate_labels.py` | copilot suggested lowering the accident threshold from 0.5 ---> 0.3 and adding a safety check that forces the top 15% of risk-scored hours to be labeled `1` when the dataset produces too few positive samples. |
-| `train_model.py` | copilot expanded a single-model script into a 5-model benchmarking loop with a `results_df` comparison table, keeping the best-F1 model selection logic clean. |
-| `test_accident_systems.py` | All 4 test cases were written with copilot, covering data generation bounds, classification logic, model file existence, and prediction schema. |
-| `ci.yml` | copilot authored the full workflow, including the `needs:` chain, pip caching with `hashFiles`, and the `if: github.event_name == 'push'` condition for Job 3. |
-| README | Drafted with copilot, then reviewed and edited for accuracy against the actual codebase. |
-
-**Human judgment was applied to:** data source selection (Open-Meteo vs alternatives), feature engineering decisions (rush hour windows, visibility clipping bounds), threshold choices, and all architectural decisions about file structure. Also the model selection code provided by me for selecting best model that performs well among various models.
 
 ---
 
@@ -131,68 +47,156 @@ This project was developed with **Github Copilot** and **gemini** as a primary d
 
 ```bash
 # 1. Clone and enter the repository
-git clone [https://github.com/Alishba14/accident-predictor-cicd.git](https://github.com/Al-Rafay-Consulting/Accident-Predictor.git)
+git clone https://github.com/Alishba14/accident-predictor-cicd.git
 cd accident-predictor-cicd
 
-# 2. Install dependencies
+# 2. Create and activate virtual environment
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS / Linux
+
+# 3. Install pinned dependencies
 pip install -r requirements.txt
 
-# 3. Fetch fresh historical training data from Open-Meteo
-python fetch_data.py
+# 4. Run the full pipeline (fetch → label → train → predict)
+python run_pipeline.py
 
-# 4. Generate realistic accident labels
-python inject_label.py
-
-# 5. Train models and export the best one
-python train_model.py
-
-# 6. Run live risk prediction
-python predict_daily_risk.py
-
-# 7. Run the test suite
+# 5. Run tests
 pytest test_accident_systems.py -v
+
+# 6. Prediction only (skips training, uses existing model)
+python run_pipeline.py --predict
+```
+
+**Manual step-by-step** (if you prefer):
+```bash
+python fetch_data.py          # Download weather data
+python generate_labels.py     # Assign accident labels
+python train_model.py         # Train and export best model
+python predict_daily_risk.py  # Run live prediction
 ```
 
 ---
 
-## Improvements I can Make With More Time
+## CI/CD Pipeline
 
-### Data Quality
-- **Replace synthetic labels with real accident reports** integration of Pakistan's National Highway Authority or Karachi traffic police open datasets to replace the probabilistically-generated `accident_occurred` column with verified incidents.
-- **Add more features** - road type, time of day (categorical), day of week, fog index, wind speed, and historical accident density per road segment would all improve model signal.
+The GitHub Actions workflow (`.github/workflows/daily_prediction.yml`) runs automatically:
 
-### Model Improvements
-- **Hyperparameter tuning** ---> i can add `GridSearchCV` or `Optuna` optimization in `train_model.py` instead of using default parameters for all classifiers.
-- **Class imbalance handling** - implement SMOTE (Synthetic Minority Oversampling) since real accident data will be heavily imbalanced (far more 0s than 1s).
-- **Model versioning** - i can use MLflow to track model versions alongside their training metrics instead of overwriting a single `accident_model.pkl`.
+- **On schedule** — every day at 06:00 UTC (11:00 AM Karachi time)
+- **On `workflow_dispatch`** — manually triggered from GitHub UI
 
-### Pipeline Enhancements
-- **Scheduled runs** - add a `schedule: cron: '0 6 * * *'` trigger to run the daily prediction every morning automatically.
-- **Artifact upload** - use `actions/upload-artifact` to persist `daily_risk_log.csv` across workflow runs.
-- **Coverage reports** - integrate `pytest-cov` and upload HTML coverage reports to GitHub Pages.
-- **Slack/email notifications** ----> notify the team when the pipeline fails or when a High Risk prediction is logged.
-- **Matrix testing** ----> test against Python 3.10, 3.11, and 3.12 using `strategy: matrix`.
-
-### Production Readiness
-- **Containerize with Docker** ----> add a `Dockerfile` so the prediction script runs identically in all environments.
-- **Deploy as an API** ----> wrap `predict_daily_risk.py` in a FastAPI endpoint and deploy to Azure Container Apps (fitting the ARC Microsoft Solutions Partner context).
-- **Database logging** ----> replace the flat CSV log with a PostgreSQL table for queryable, persistent prediction history.
+```
+Scheduled / Manual trigger
+          │
+          ▼
+  [Install dependencies from requirements.txt]
+          │
+          ▼
+  [Run pytest suite — 12 tests]
+          │  all pass?
+          ▼
+  [python predict_daily_risk.py]
+          │
+          ▼
+  [git commit & push updated daily_risk_log.csv]
+```
 
 ---
 
-## 📋 Git Workflow Followed
+## Test Suite (12 tests)
 
-Each feature branch was submitted as a **Pull Request** with a description of changes. No direct commits to `main`.
+| Test | What it covers |
+|------|----------------|
+| `test_synthetic_data_generation` | DataFrame shape, column names, feature bounds |
+| `test_map_risk_logic` | High / Medium / Low classification |
+| `test_map_risk_exact_boundaries` | Exact boundary values (0.70, 0.40) |
+| `test_traffic_density_rush_hour` | 8 AM Karachi → 0.85 (UTC-corrected) |
+| `test_traffic_density_off_peak` | 12 PM Karachi → 0.40 |
+| `test_traffic_density_evening_rush` | 5 PM Karachi → 0.85 |
+| `test_load_real_data_missing_required_column` | Raises on missing column |
+| `test_load_real_data_all_zero_labels_raises` | Raises `ValueError` on all-zero labels |
+| `test_load_real_data_clips_negative_precipitation` | Negative precip clipped to 0 |
+| `test_load_real_data_removes_duplicates` | Duplicate rows dropped silently |
+| `test_model_file_exists_and_loads` | Model binary is a valid joblib classifier *(skipped on fresh clone)* |
+| `test_model_prediction_schema` | Feature shape, output bounds, valid probability *(skipped on fresh clone)* |
+
+---
+
+## Security & Quality Measures
+
+| Area | Measure |
+|------|---------|
+| Model integrity | SHA-256 hash written on save; verified before every `joblib.load` |
+| API failure | Fail-closed — raises `RuntimeError` instead of silently returning Low Risk |
+| Model output | `predict_proba` result bounds-checked to `[0.0, 1.0]` |
+| Log file | Atomic creation with `touch(exist_ok=False)` to fix TOCTOU race condition |
+| Input validation | Date format and calendar validity checked before URL construction |
+| Data validation | Negative precip clipped; duplicate rows dropped; all-zero labels raise error |
+| Feature scaling | SVC and Logistic Regression wrapped in `StandardScaler` Pipeline |
+| Model selection | 5-fold stratified CV (not a single split) to avoid lucky/unlucky splits |
+| Null guard | Raises if all models score CV F1 = 0 instead of saving a null model |
+| Model versioning | Timestamped `.pkl` backup saved on every training run |
+| Data backup | `historical_accidents.csv.bak` written before any label overwrite |
+| Dependencies | Pinned to exact major versions in `requirements.txt` |
+
+---
+
+## Technology Stack
+
+| Tool | Role |
+|------|------|
+| **Python 3.10+** | Core language |
+| **scikit-learn** | 5-classifier benchmarking, Pipelines, StandardScaler, StratifiedKFold |
+| **pandas / numpy** | Data loading, feature engineering, label generation |
+| **joblib** | Model serialization |
+| **Open-Meteo API** | Free, no-auth weather data (archive + forecast endpoints) |
+| **GitHub Actions** | CI/CD scheduling, test gate, automated log commits |
+| **pytest** | 12-test suite with `skipif` markers for model-dependent tests |
+
+---
+
+## Known Limitations
+
+- **Labels are synthetic** — `generate_labels.py` computes `accident_occurred` from a risk-scoring formula applied to the same features used for training. Model metrics reflect how well it learned the formula, not real-world accident prediction accuracy.
+- **Only 3 features** — adding road type, day-of-week, wind speed, and historical hotspot density would meaningfully improve signal.
+- **Binary traffic density** — the `traffic_density_index` is effectively a rush-hour flag (0.85 / 0.40). A real traffic feed would improve this.
+
+---
+
+## Potential Improvements
+
+- **Real accident data** — integrate Pakistan's NHA or Karachi traffic police open datasets to replace synthetic labels.
+- **Hyperparameter tuning** — add `GridSearchCV` or `Optuna` instead of default classifier parameters.
+- **SMOTE** — handle class imbalance in real accident data with oversampling.
+- **MLflow tracking** — log training runs and compare model versions over time.
+- **Docker + FastAPI** — containerize and expose `predict_daily_risk.py` as a REST endpoint.
+- **Matrix testing** — test against Python 3.10, 3.11, and 3.12 in CI.
+- **Coverage reports** — integrate `pytest-cov` and publish HTML coverage to GitHub Pages.
+
+---
+
+## AI Tools Used
+
+This project was developed with **GitHub Copilot** as a primary development assistant:
+
+| File | Copilot contribution |
+|------|----------------------|
+| `fetch_data.py` | Identified and fixed a timezone bug — raw UTC timestamps were used for rush-hour logic, shifting all hours by 5. Fixed by converting through `ZoneInfo("Asia/Karachi")`. |
+| `generate_labels.py` | Suggested lowering the accident threshold and adding a safety check to force the top 15% of risk-scored hours to `1` when positives are too sparse. |
+| `train_model.py` | Expanded a single-model script into a 5-model benchmarking loop with CV-based selection. |
+| `test_accident_systems.py` | All 12 tests written and extended with Copilot, covering bounds, thresholds, timezone logic, and edge cases. |
+| `daily_prediction.yml` | Authored the full workflow including scheduling, dependency installation, and the conditional log commit step. |
+
+**Human judgment applied to:** data source selection, feature engineering decisions, rush-hour window definitions, threshold choices, and all architectural decisions.
 
 ---
 
 ## Dependencies
 
 ```
-numpy
-pandas
-scikit-learn
-joblib
+numpy>=2.4,<3
+pandas>=3.0,<4
+scikit-learn>=1.9,<2
+joblib>=1.5,<2
+pytest>=8.0,<9
 ```
-
----

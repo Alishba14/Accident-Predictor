@@ -1,3 +1,4 @@
+import re
 import urllib.request
 import json
 from datetime import datetime
@@ -27,16 +28,34 @@ def get_traffic_density(dt_utc: datetime) -> float:
     else:
         return 0.40
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validate_date(value: str, param: str) -> None:
+    """Raises ValueError if value is not a valid YYYY-MM-DD date string."""
+    if not _DATE_RE.match(value):
+        raise ValueError(f"{param} must be in YYYY-MM-DD format, got: {value!r}")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"{param} is not a valid calendar date: {value!r}")
+
+
 def fetch_historical_training_data(start_date: str, end_date: str):
     """
     Fetches hourly precipitation and visibility from Open-Meteo Archive API,
     applies the project's data engineering scaling rules, merges local traffic density,
     and saves the output as a training-ready CSV dataset.
-    
+
     Parameters:
         start_date (str): format "YYYY-MM-DD" (e.g., "2025-01-01")
         end_date (str): format "YYYY-MM-DD" (e.g., "2025-12-31")
     """
+    _validate_date(start_date, "start_date")
+    _validate_date(end_date, "end_date")
+    if start_date >= end_date:
+        raise ValueError(f"start_date ({start_date}) must be before end_date ({end_date}).")
+
     # Open-Meteo Archive API URL constructed with project parameters
     url = (
         f"https://archive-api.open-meteo.com/v1/archive?"
